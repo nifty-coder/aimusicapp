@@ -1,15 +1,59 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Play, Sparkles, Music } from "lucide-react";
+import { Play, Sparkles, Music, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMusicLibrary } from "@/hooks/useMusicLibrary";
 import { useToast } from "@/hooks/use-toast";
 
 export function HeroSection() {
   const [url, setUrl] = useState("");
-  const { addMusicUrl, isLoading } = useMusicLibrary();
+  const { addMusicUrl, addAudioFile, isLoading } = useMusicLibrary();
   const { toast } = useToast();
+
+  // Max upload size 10 MB
+  const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadFileName, setUploadFileName] = useState('');
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+
+    if (f.size > MAX_FILE_SIZE) {
+      toast({ title: 'Error', description: 'File must be 10 MB or smaller', variant: 'destructive' });
+      e.target.value = '';
+      return;
+    }
+
+  // Show filename and a simulated progress while processing
+  setUploadFileName(f.name);
+  setUploadLoading(true);
+  setUploadProgress(0);
+
+    const interval = setInterval(() => {
+      setUploadProgress((p) => Math.min(90, Math.floor(p + Math.random() * 10 + 5)));
+    }, 250);
+
+    try {
+      await addAudioFile(f);
+  setUploadProgress(100);
+      toast({ title: 'Uploaded', description: 'Audio file analyzed and added to library.' });
+    } catch (err) {
+      toast({ title: 'Error', description: 'Failed to process audio file', variant: 'destructive' });
+    } finally {
+      clearInterval(interval);
+      // small delay so user sees 100%
+      setTimeout(() => {
+        setUploadLoading(false);
+        setUploadProgress(0);
+        setUploadFileName('');
+      }, 600);
+      e.target.value = '';
+    }
+  };
 
   const handleAnalyze = async () => {
     if (!url.trim() || !isValidYouTubeUrl(url)) return;
@@ -77,7 +121,44 @@ export function HeroSection() {
                       disabled={isLoading}
                     />
                   </div>
-                  
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      id="audioUpload"
+                      onChange={handleFileChange}
+                      className="hidden"
+                      disabled={isLoading || uploadLoading}
+                    />
+                    <label
+                      htmlFor="audioUpload"
+                      className={cn(
+                        "px-4 py-2 rounded-xl cursor-pointer text-sm font-medium",
+                        uploadLoading
+                          ? "bg-purple-600 text-white"
+                          : "bg-purple-500 text-white hover:bg-purple-600"
+                      )}
+                    >
+                      <span className="flex items-center gap-2">
+                        {uploadLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                        <span>{uploadLoading ? 'Uploading...' : 'Upload audio'}</span>
+                      </span>
+                    </label>
+
+                    {/* filename indicator + progress */}
+                    {uploadFileName && (
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm text-muted-foreground max-w-xs truncate">{uploadFileName}</span>
+                        <div className="w-24 h-2 bg-background/30 rounded overflow-hidden">
+                          <div
+                            className="h-full bg-purple-400"
+                            style={{ width: `${uploadProgress}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <Button
                     onClick={handleAnalyze}
                     disabled={!isValidYouTubeUrl(url) || isLoading}
@@ -105,6 +186,7 @@ export function HeroSection() {
                 </div>
               </div>
             </div>
+            {/* single upload control now lives inline with URL input — selecting a file auto-uploads (10 MB limit) */}
 
             {/* Status Message */}
             {url && (

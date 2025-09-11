@@ -2,6 +2,8 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight, Music, Volume2, Piano, Drum, Zap, Mic, Music2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMusicLibrary } from "@/hooks/useMusicLibrary";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 
 const iconMap = {
   Volume2,
@@ -19,7 +21,8 @@ interface MusicSidebarProps {
 
 export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const { urls, removeMusicUrl } = useMusicLibrary();
+  const { urls, removeMusicUrl, clearLibrary } = useMusicLibrary();
+  const { toast } = useToast();
 
   const toggleExpanded = (id: string) => {
     const newExpanded = new Set(expandedItems);
@@ -34,23 +37,39 @@ export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
   return (
     <div className="w-80 h-screen bg-card border-r border-border/50 flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="p-6 border-b border-border/50 bg-gradient-secondary">
-        <h2 className="text-xl font-semibold text-foreground mb-2">Music Library</h2>
-        <p className="text-sm text-muted-foreground">
-          {urls.length} tracks analyzed
-        </p>
+      <div className="p-6 border-b border-border/50 bg-gradient-secondary flex items-start justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-foreground mb-2">Music Library</h2>
+          <p className="text-sm text-muted-foreground">{urls.length} tracks analyzed</p>
+        </div>
+        <div>
+          {urls.length > 0 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-destructive"
+              onClick={() => {
+                const ok = window.confirm('Clear your music library? This cannot be undone.');
+                if (!ok) return;
+                try {
+                  clearLibrary();
+                  toast({ title: 'Library cleared', description: 'Your music library has been cleared.' });
+                } catch (err: any) {
+                  toast({ title: 'Error', description: err?.message || 'Failed to clear library', variant: 'destructive' });
+                }
+              }}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Clear
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* URL List */}
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-3">
-          {urls.length === 0 ? (
-            <div className="text-center py-8">
-              <Music className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">No tracks analyzed yet</p>
-              <p className="text-xs text-muted-foreground mt-1">Add a YouTube URL to get started</p>
-            </div>
-          ) : (
+          {urls.length === 0 ? null : (
             urls.map((musicUrl) => {
               const isExpanded = expandedItems.has(musicUrl.id);
               

@@ -17,7 +17,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToSignUp }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const { signIn, signInWithGoogle } = useAuth();
+  const { signIn /* signInWithGoogle removed from login */ } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -43,24 +43,10 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToSignUp }) => {
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    setLoading(true);
-    try {
-      await signInWithGoogle();
-      toast({
-        title: 'Success',
-        description: 'Successfully signed in with Google!',
-      });
-      navigate('/');
-    } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to sign in with Google',
-        variant: 'destructive',
-      });
-    } finally {
-      setLoading(false);
-    }
+  // When user clicks Google on the Sign In form, force them to go to Sign Up flow
+  const handleGoogleSignIn = () => {
+    // Open the SignUp view so user explicitly signs up with Google
+    onSwitchToSignUp();
   };
 
   return (

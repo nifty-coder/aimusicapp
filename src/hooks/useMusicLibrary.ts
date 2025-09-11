@@ -14,6 +14,9 @@ export interface MusicUrl {
   thumbnail: string;
   addedAt: Date;
   layers: MusicLayer[];
+  // For uploaded audio files
+  isLocalFile?: boolean;
+  fileDataUrl?: string | null;
 }
 
 const STORAGE_KEY = "music-analyzer-library";
@@ -70,6 +73,38 @@ export function useMusicLibrary() {
     }
   };
 
+  const addAudioFile = async (file: File): Promise<MusicUrl> => {
+    setIsLoading(true);
+    try {
+      // Simulate async processing / analysis
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Read file as data URL (small files only recommended)
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const newMusicUrl: MusicUrl = {
+        id: Date.now().toString(),
+        url: `file:${file.name}`,
+        title: file.name,
+        thumbnail: '',
+        addedAt: new Date(),
+        layers: generateMockLayers(),
+        isLocalFile: true,
+        fileDataUrl: dataUrl,
+      };
+
+      setUrls(prev => [newMusicUrl, ...prev]);
+      return newMusicUrl;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const removeMusicUrl = (id: string) => {
     setUrls(prev => prev.filter(url => url.id !== id));
   };
@@ -83,6 +118,7 @@ export function useMusicLibrary() {
     urls,
     isLoading,
     addMusicUrl,
+    addAudioFile,
     removeMusicUrl,
     clearLibrary
   };

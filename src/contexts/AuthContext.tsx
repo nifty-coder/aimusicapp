@@ -14,9 +14,9 @@ interface AuthContextType {
   currentUser: User | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<any>;
   logout: () => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
+  signInWithGoogle: () => Promise<any>;
   refreshUser: () => Promise<void>;
 }
 
@@ -39,7 +39,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   const signUp = async (email: string, password: string) => {
-    await createUserWithEmailAndPassword(auth, email, password);
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    try {
+      // Clear client-side music library for brand new accounts
+      // Keep in sync with useMusicLibrary.STORAGE_KEY
+      localStorage.removeItem('music-analyzer-library');
+    } catch (e) {
+      // noop
+    }
+    return userCredential;
   };
 
   const signIn = async (email: string, password: string) => {
@@ -52,7 +60,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
-    await signInWithPopup(auth, provider);
+    const cred = await signInWithPopup(auth, provider);
+    // If this is a newly created user via Google, clear any existing local library
+    try {
+      if ((cred as any)?.additionalUserInfo?.isNewUser) {
+        localStorage.removeItem('music-analyzer-library');
+      }
+    } catch (e) {
+      // noop
+    }
+    return cred;
   };
 
   const refreshUser = async () => {

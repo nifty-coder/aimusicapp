@@ -53,7 +53,14 @@ export const UserProfile: React.FC = () => {
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="relative h-8 w-8 rounded-full">
           <Avatar className="h-8 w-8">
-            <AvatarImage src={profile?.profile_picture || undefined} alt={displayName} />
+            <AvatarImage
+              src={
+                currentUser?.providerData?.[0]?.providerId === 'google.com'
+                  ? currentUser?.photoURL || profile?.profile_picture || undefined
+                  : profile?.profile_picture || undefined
+              }
+              alt={displayName}
+            />
             <AvatarFallback>{getInitials(displayName)}</AvatarFallback>
           </Avatar>
         </Button>
