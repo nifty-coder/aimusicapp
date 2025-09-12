@@ -17,6 +17,12 @@ export interface MusicUrl {
   // For uploaded audio files
   isLocalFile?: boolean;
   fileDataUrl?: string | null;
+  // extracted files (filename + blobUrl)
+  files?: { filename: string; blobUrl: string }[];
+  // optional cache key returned by backend for uploads
+  cacheKey?: string;
+  // whether the entry finished processing and is available for download
+  processed?: boolean;
 }
 
 const STORAGE_KEY = "music-analyzer-library";
@@ -24,6 +30,8 @@ const STORAGE_KEY = "music-analyzer-library";
 export function useMusicLibrary() {
   const [urls, setUrls] = useState<MusicUrl[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const pendingDeletes = { current: new Map<string, { item: MusicUrl; timer: ReturnType<typeof setTimeout> }>() } as { current: Map<string, { item: MusicUrl; timer: ReturnType<typeof setTimeout> }> };
+  const pendingClear = { current: null as null | { items: MusicUrl[]; timer: ReturnType<typeof setTimeout> } } as { current: null | { items: MusicUrl[]; timer: ReturnType<typeof setTimeout> } };
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -42,28 +50,75 @@ export function useMusicLibrary() {
   // Save to localStorage whenever urls change
   useEffect(() => {
     if (urls.length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(urls));
+      try {
+        const sanitized = urls.map(u => ({
+          ...u,
+          files: u.files ? u.files.map(f => ({ filename: f.filename })) : undefined
+        }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+      } catch (e) {
+        // noop
+      }
     }
   }, [urls]);
 
   const addMusicUrl = async (url: string): Promise<MusicUrl> => {
     setIsLoading(true);
-    
     try {
-      // Simulate API call to analyze the music
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Extract video ID and create mock data
-      const videoId = extractVideoId(url);
-      const title = await getMockTitle(url);
-      
+      // Request backend to process YouTube and return ZIP
+  const base = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000';
+      const res = await fetch(`${base}/youtube`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ youtube_url: url })
+      });
+
+      if (!res.ok) {
+        // Try to extract error detail from backend
+        let detail = `HTTP ${res.status}`;
+        try {
+          const json = await res.json();
+          detail = json.detail || json.message || JSON.stringify(json);
+        } catch (e) {
+          try {
+            const text = await res.text();
+            detail = text || detail;
+          } catch {}
+        }
+        throw new Error(detail);
+      }
+
+      const videoTitleHeader = res.headers.get('X-Video-Title');
+      const blob = await res.blob();
+    // dynamic import of jszip (ensure dependency installed)
+    // @ts-ignore - allow dynamic import until types are available
+    const JSZipModule = await import('jszip');
+    // @ts-ignore - default export on some bundlers
+    const JSZip = (JSZipModule as any).default || JSZipModule;
+    // JSZip exposes a static `loadAsync` method
+    const zip = await JSZip.loadAsync(blob);
+
+      const files: { filename: string; blobUrl: string }[] = [];
+      await Promise.all(Object.keys(zip.files).map(async (filename) => {
+        // skip directory entries
+        if (filename.endsWith('/')) return;
+        const fileData = await zip.files[filename].async('blob');
+        const blobUrl = URL.createObjectURL(fileData);
+        files.push({ filename, blobUrl });
+      }));
+
+  const videoId = extractVideoId(url);
+  const title = videoTitleHeader || (await getMockTitle(url));
+
       const newMusicUrl: MusicUrl = {
         id: Date.now().toString(),
         url,
         title,
         thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
         addedAt: new Date(),
-        layers: generateMockLayers()
+        layers: normalizeLayers(generateMockLayers()),
+        files,
+        processed: true,
       };
 
       setUrls(prev => [newMusicUrl, ...prev]);
@@ -76,16 +131,45 @@ export function useMusicLibrary() {
   const addAudioFile = async (file: File): Promise<MusicUrl> => {
     setIsLoading(true);
     try {
-      // Simulate async processing / analysis
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      const formData = new FormData();
+      formData.append('file', file);
 
-      // Read file as data URL (small files only recommended)
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target?.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
+  const base = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000';
+      const res = await fetch(`${base}/upload`, {
+        method: 'POST',
+        body: formData,
       });
+
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const json = await res.json();
+          detail = json.detail || json.message || JSON.stringify(json);
+        } catch (e) {
+          try {
+            const text = await res.text();
+            detail = text || detail;
+          } catch {}
+        }
+        throw new Error(detail);
+      }
+
+    const blob = await res.blob();
+    // dynamic import of jszip (ensure dependency installed)
+    // @ts-ignore - allow dynamic import until types are available
+    const JSZipModule = await import('jszip');
+    // @ts-ignore - default export on some bundlers
+    const JSZip = (JSZipModule as any).default || JSZipModule;
+    // JSZip exposes a static `loadAsync` method
+    const zip = await JSZip.loadAsync(blob);
+
+      const files: { filename: string; blobUrl: string }[] = [];
+      await Promise.all(Object.keys(zip.files).map(async (filename) => {
+        if (filename.endsWith('/')) return;
+        const fileData = await zip.files[filename].async('blob');
+        const blobUrl = URL.createObjectURL(fileData);
+        files.push({ filename, blobUrl });
+      }));
 
       const newMusicUrl: MusicUrl = {
         id: Date.now().toString(),
@@ -93,9 +177,12 @@ export function useMusicLibrary() {
         title: file.name,
         thumbnail: '',
         addedAt: new Date(),
-        layers: generateMockLayers(),
+        layers: normalizeLayers(generateMockLayers()),
         isLocalFile: true,
-        fileDataUrl: dataUrl,
+        fileDataUrl: null,
+        files,
+        cacheKey: res.headers.get('X-Cache-Key') || undefined,
+        processed: true,
       };
 
       setUrls(prev => [newMusicUrl, ...prev]);
@@ -106,12 +193,139 @@ export function useMusicLibrary() {
   };
 
   const removeMusicUrl = (id: string) => {
-    setUrls(prev => prev.filter(url => url.id !== id));
+    // Update state and localStorage synchronously: compute new list,
+    // revoke any in-memory blob URLs for the removed item to free resources,
+    // then persist the sanitized remaining list or remove the storage key.
+    setUrls(prev => {
+      const remaining = prev.filter(url => url.id !== id);
+      const removed = prev.find(url => url.id === id);
+      // Revoke blob URLs from removed item
+      try {
+        if (removed && removed.files) {
+          for (const f of removed.files) {
+            try { if (f.blobUrl) URL.revokeObjectURL(f.blobUrl); } catch {};
+          }
+        }
+      } catch {}
+
+      // Persist remaining or clear storage
+      try {
+        if (remaining.length > 0) {
+          const sanitized = remaining.map(u => ({
+            ...u,
+            files: u.files ? u.files.map(f => ({ filename: f.filename })) : undefined
+          }));
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {
+        // noop
+      }
+
+      return remaining;
+    });
+  };
+
+  const finalizeRemoveMusicUrl = (id: string) => {
+    try {
+      const entry = pendingDeletes.current.get(id);
+      if (!entry) return;
+      // Revoke blob URLs from removed item
+      if (entry.item && entry.item.files) {
+        for (const f of entry.item.files) {
+          try { if (f.blobUrl) URL.revokeObjectURL(f.blobUrl); } catch {};
+        }
+      }
+      pendingDeletes.current.delete(id);
+    } catch (e) {
+      // noop
+    }
+  };
+
+  const scheduleRemoveMusicUrl = (id: string, ttl = 10000) => {
+    const found = urls.find(u => u.id === id);
+    if (!found) return;
+    // Remove from visible list immediately
+    setUrls(prev => {
+      const remaining = prev.filter(u => u.id !== id);
+      try {
+        if (remaining.length > 0) {
+          const sanitized = remaining.map(u => ({
+            ...u,
+            files: u.files ? u.files.map(f => ({ filename: f.filename })) : undefined
+          }));
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch {}
+      return remaining;
+    });
+
+    // store pending delete with timer
+    const timer = setTimeout(() => finalizeRemoveMusicUrl(id), ttl);
+    pendingDeletes.current.set(id, { item: found, timer });
+  };
+
+  const undoRemoveMusicUrl = (id: string) => {
+    const entry = pendingDeletes.current.get(id);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    pendingDeletes.current.delete(id);
+    setUrls(prev => {
+      const next = [entry.item, ...prev];
+      try {
+        const sanitized = next.map(u => ({
+          ...u,
+          files: u.files ? u.files.map(f => ({ filename: f.filename })) : undefined
+        }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+      } catch {}
+      return next;
+    });
+  };
+
+  const updateMusicTitle = (id: string, newTitle: string) => {
+    setUrls(prev => prev.map(u => u.id === id ? { ...u, title: newTitle } : u));
   };
 
   const clearLibrary = () => {
-    setUrls([]);
-    localStorage.removeItem(STORAGE_KEY);
+    // Schedule clear with undo window: move all items into pendingClear
+    try {
+      const items = [...urls];
+      setUrls([]);
+      localStorage.removeItem(STORAGE_KEY);
+      const timer = setTimeout(() => {
+        // finalize: revoke any blob URLs
+        try {
+          for (const u of items) {
+            if (u.files) {
+              for (const f of u.files) {
+                try { if (f.blobUrl) URL.revokeObjectURL(f.blobUrl); } catch {};
+              }
+            }
+          }
+        } catch {}
+        pendingClear.current = null;
+      }, 10000);
+      pendingClear.current = { items, timer };
+    } catch (e) {
+      setUrls([]);
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  };
+
+  const undoClearLibrary = () => {
+    if (!pendingClear.current) return;
+    const { items, timer } = pendingClear.current;
+    clearTimeout(timer);
+    pendingClear.current = null;
+    setUrls(items);
+    try {
+      const sanitized = items.map(u => ({ ...u, files: u.files ? u.files.map(f => ({ filename: f.filename })) : undefined }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitized));
+    } catch {}
   };
 
   return {
@@ -120,8 +334,18 @@ export function useMusicLibrary() {
     addMusicUrl,
     addAudioFile,
     removeMusicUrl,
+    updateMusicTitle,
+    scheduleRemoveMusicUrl,
+    undoRemoveMusicUrl,
+    scheduleClearLibrary: clearLibrary,
+    undoClearLibrary,
     clearLibrary
   };
+}
+
+function normalizeLayers(layers: MusicLayer[]): MusicLayer[] {
+  const total = layers.reduce((s, l) => s + (l.volume || 0), 0) || 1;
+  return layers.map(l => ({ ...l, volume: Math.round(((l.volume || 0) / total) * 100) }));
 }
 
 function extractVideoId(url: string): string {
