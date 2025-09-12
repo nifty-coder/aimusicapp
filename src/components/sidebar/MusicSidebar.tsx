@@ -48,47 +48,47 @@ export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
   };
 
   // When expanding a YouTube item, fetch the extracted file listing from backend
-  const ensureAvailableFiles = async (musicUrlId: string, musicUrl: any) => {
-    if (!musicUrl.url || !musicUrl.url.startsWith('http')) return;
-    if (availableFiles[musicUrlId]) return; // already fetched
-    try {
-      const res = await fetch(`${apiBase}/youtube/extracted`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ youtube_url: musicUrl.url })
-      });
-      if (!res.ok) {
-        // ignore failure; we won't filter files in that case
-        return;
-      }
-      const json = await res.json();
-      // If backend provided a title header on prior /youtube request we may get it later
-      const titleHeader = res.headers.get('X-Video-Title');
-      if (titleHeader) {
-        setTitleOverrides(prev => ({ ...prev, [musicUrlId]: titleHeader }));
-        // Also update the stored MusicUrl title so it persists
-        try {
-          updateMusicTitle(musicUrlId, titleHeader);
-        } catch (e) {
-          // ignore
-        }
-      }
-      const names = new Set<string>();
-      if (Array.isArray(json.extracted_files)) {
-        for (const f of json.extracted_files) {
-          if (f && f.filename) {
-            // skip directory-like entries
-            if (f.filename.startsWith('audio/') || f.filename.endsWith('/')) continue;
-            names.add(f.filename);
-          }
-        }
-      }
-      setAvailableFiles(prev => ({ ...prev, [musicUrlId]: names }));
-    } catch (err) {
-      // ignore and don't block UI
-      console.warn('Failed to fetch extracted listing', err);
-    }
-  };
+  // const ensureAvailableFiles = async (musicUrlId: string, musicUrl: any) => {
+  //   if (!musicUrl.url || !musicUrl.url.startsWith('http')) return;
+  //   if (availableFiles[musicUrlId]) return; // already fetched
+  //   try {
+  //     const res = await fetch(`${apiBase}/youtube/extracted`, {
+  //       method: 'POST',
+  //       headers: { 'Content-Type': 'application/json' },
+  //       body: JSON.stringify({ youtube_url: musicUrl.url })
+  //     });
+  //     if (!res.ok) {
+  //       // ignore failure; we won't filter files in that case
+  //       return;
+  //     }
+  //     const json = await res.json();
+  //     // If backend provided a title header on prior /youtube request we may get it later
+  //     const titleHeader = res.headers.get('X-Video-Title');
+  //     if (titleHeader) {
+  //       setTitleOverrides(prev => ({ ...prev, [musicUrlId]: titleHeader }));
+  //       // Also update the stored MusicUrl title so it persists
+  //       try {
+  //         updateMusicTitle(musicUrlId, titleHeader);
+  //       } catch (e) {
+  //         // ignore
+  //       }
+  //     }
+  //     const names = new Set<string>();
+  //     if (Array.isArray(json.extracted_files)) {
+  //       for (const f of json.extracted_files) {
+  //         if (f && f.filename) {
+  //           // skip directory-like entries
+  //           if (f.filename.startsWith('audio/') || f.filename.endsWith('/')) continue;
+  //           names.add(f.filename);
+  //         }
+  //       }
+  //     }
+  //     setAvailableFiles(prev => ({ ...prev, [musicUrlId]: names }));
+  //   } catch (err) {
+  //     // ignore and don't block UI
+  //     console.warn('Failed to fetch extracted listing', err);
+  //   }
+  // };
 
   return (
     <div className="w-80 md:w-80 h-full md:h-screen bg-card border-r border-border/50 flex flex-col overflow-hidden">
@@ -165,7 +165,7 @@ export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
                     
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <h3 className="font-medium text-foreground text-sm truncate">
+                        <h3 className="font-medium text-foreground text-sm">
                           {titleOverrides[musicUrl.id] || musicUrl.title}
                         </h3>
                       </div>

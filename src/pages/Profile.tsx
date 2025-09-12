@@ -35,6 +35,16 @@ const Profile = () => {
     }
   }, [profile]);
 
+  const [localPic, setLocalPic] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const p = localStorage.getItem('user-profile-picture');
+      if (p) setLocalPic(p);
+    } catch (e) {
+      // noop
+    }
+  }, []);
+
   const getInitials = (name: string) => {
     return name
       .split(' ')
@@ -158,10 +168,11 @@ const Profile = () => {
                     <AvatarImage
                       // Prefer Google photoURL when the user signed up with Google
                       src={
-                        currentUser?.providerData?.[0]?.providerId === 'google.com'
-                          ? currentUser?.photoURL || profile?.profile_picture || undefined
-                          : profile?.profile_picture || undefined
-                      }
+                          // Prefer the locally cached picture if available
+                          localPic || (currentUser?.providerData?.[0]?.providerId === 'google.com'
+                            ? currentUser?.photoURL || profile?.profile_picture || undefined
+                            : profile?.profile_picture || undefined)
+                        }
                       alt={displayName}
                     />
                     <AvatarFallback className="text-2xl font-semibold bg-primary text-primary-foreground">

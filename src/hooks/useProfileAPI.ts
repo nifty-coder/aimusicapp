@@ -41,6 +41,16 @@ export const useProfileAPI = () => {
       if (response.success && response.data) {
         console.log('Profile fetched successfully:', response.data);
         setProfile(response.data);
+        // Persist profile picture locally for UI resilience across reloads
+        try {
+          if (response.data.profile_picture) {
+            localStorage.setItem('user-profile-picture', response.data.profile_picture);
+          } else {
+            localStorage.removeItem('user-profile-picture');
+          }
+        } catch (e) {
+          // noop
+        }
       } else {
         if (response.error?.includes('404') || response.error?.includes('not found')) {
           // Profile doesn't exist, create it
@@ -80,6 +90,13 @@ export const useProfileAPI = () => {
       if (response.success && response.data) {
         console.log('Profile created successfully:', response.data);
         setProfile(response.data);
+        try {
+          if (response.data.profile_picture) {
+            localStorage.setItem('user-profile-picture', response.data.profile_picture);
+          } else {
+            localStorage.removeItem('user-profile-picture');
+          }
+        } catch (e) {}
       } else {
         console.error('Error creating profile:', response.error);
         setError(response.error || 'Failed to create profile');
@@ -103,6 +120,13 @@ export const useProfileAPI = () => {
       if (response.success && response.data) {
         console.log('Profile updated successfully:', response.data);
         setProfile(response.data);
+        try {
+          if (response.data.profile_picture) {
+            localStorage.setItem('user-profile-picture', response.data.profile_picture);
+          } else {
+            localStorage.removeItem('user-profile-picture');
+          }
+        } catch (e) {}
         return response.data;
       } else {
         console.error('Error updating profile:', response.error);
@@ -115,6 +139,19 @@ export const useProfileAPI = () => {
       throw err;
     }
   };
+
+  // On init, hydrate any locally persisted profile picture so avatar persists across reloads
+  useEffect(() => {
+    try {
+      const pic = localStorage.getItem('user-profile-picture');
+      if (pic && !profile) {
+        // Create a minimal profile object with only picture so UI can show it until real profile loads
+        setProfile((prev) => prev || ({ id: 'local', user_id: currentUser?.uid || 'local', display_name: null, email: currentUser?.email || '', profile_picture: pic, created_at: new Date().toISOString(), updated_at: new Date().toISOString() } as Profile));
+      }
+    } catch (e) {
+      // noop
+    }
+  }, []);
 
   // Update profile picture
   const updateProfilePicture = async (profilePicture: string | null) => {

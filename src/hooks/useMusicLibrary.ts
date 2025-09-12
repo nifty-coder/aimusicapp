@@ -88,8 +88,8 @@ export function useMusicLibrary() {
         throw new Error(detail);
       }
 
-      const videoTitleHeader = res.headers.get('X-Video-Title');
-      const blob = await res.blob();
+  const videoTitleHeader = res.headers.get('X-Video-Title');
+  const blob = await res.blob();
     // dynamic import of jszip (ensure dependency installed)
     // @ts-ignore - allow dynamic import until types are available
     const JSZipModule = await import('jszip');
@@ -107,8 +107,27 @@ export function useMusicLibrary() {
         files.push({ filename, blobUrl });
       }));
 
+  // If backend provided a title header use it; otherwise try a lightweight
+  // /youtube/extracted request which sometimes includes the title header.
+  let finalTitle: string | null = videoTitleHeader ? videoTitleHeader.trim() : null;
+  if (!finalTitle) {
+    try {
+      const res2 = await fetch(`${base}/youtube/extracted`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ youtube_url: url })
+      });
+      if (res2 && res2.ok) {
+        const header2 = res2.headers.get('X-Video-Title');
+        if (header2) finalTitle = header2.trim();
+      }
+    } catch (e) {
+      // ignore and fall back to local title
+    }
+  }
+
   const videoId = extractVideoId(url);
-  const title = videoTitleHeader || (await getMockTitle(url));
+  const title = finalTitle || (await getMockTitle(url));
 
       const newMusicUrl: MusicUrl = {
         id: Date.now().toString(),

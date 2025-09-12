@@ -5,10 +5,12 @@ import { Play, Sparkles, Music, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMusicLibrary } from "@/hooks/useMusicLibrary";
 import { useToast } from "@/hooks/use-toast";
+// Import the Volume2 icon
+import { Volume2 } from "lucide-react";
 
 export function HeroSection() {
   const [url, setUrl] = useState("");
-  const { addMusicUrl, addAudioFile, isLoading } = useMusicLibrary();
+  const { addMusicUrl, addAudioFile, isLoading, updateMusicTitle } = useMusicLibrary();
   const { toast } = useToast();
 
   // Max upload size 10 MB
@@ -61,11 +63,33 @@ export function HeroSection() {
     if (!url.trim() || !isValidYouTubeUrl(url)) return;
     
     try {
-      await addMusicUrl(url);
+      // Try to fetch a lightweight title from YouTube oEmbed before adding
+      let fetchedTitle: string | null = null;
+      try {
+        const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+        const r = await fetch(oembedUrl);
+        if (r.ok) {
+          const j = await r.json();
+          if (j && j.title) fetchedTitle = String(j.title).trim();
+        }
+      } catch (e) {
+        // ignore - we'll let the library/backend try to determine the title
+      }
+
+      const newEntry = await addMusicUrl(url);
+      // If we fetched a title locally, update the stored entry so it appears immediately
+      if (fetchedTitle && newEntry && newEntry.id) {
+        try {
+          updateMusicTitle(newEntry.id, fetchedTitle);
+        } catch (e) {
+          // ignore update failures
+        }
+      }
+
       setUrl("");
       toast({
         title: "Analysis Complete",
-        description: "Your music has been analyzed and added to the library.",
+        description: `\u201C${fetchedTitle || newEntry.title}\u201D has been analyzed and added to the library.`,
       });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
@@ -88,6 +112,8 @@ export function HeroSection() {
     <div className="flex-1 flex items-center justify-center p-6 md:p-8">
       <div className="max-w-3xl md:max-w-4xl w-full text-center space-y-8">
         {/* Header */}
+          <div className="max-w-3xl md:max-w-4xl w-full text-center space-y-8"></div>
+
         <div className="space-y-6 animate-fade-in">
             <div className="flex items-center justify-center gap-3 mb-6">
             <div className="p-3 rounded-full bg-gradient-primary">
@@ -115,7 +141,7 @@ export function HeroSection() {
                   <div className="flex-1 min-w-0">
                     <Input
                       type="url"
-                      placeholder="Paste YouTube URL here..."
+                      placeholder="Enter YouTube URL"
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
                       className={cn(
@@ -124,6 +150,7 @@ export function HeroSection() {
                         "placeholder:text-muted-foreground/70"
                       )}
                       disabled={isLoading}
+                      style={{ width: "14.25em" }}
                     />
                   </div>
                     <div className="flex items-center gap-2">
@@ -143,10 +170,11 @@ export function HeroSection() {
                         "px-4 py-2 rounded-xl text-sm font-medium opacity-60 cursor-not-allowed",
                         "bg-purple-500 text-white"
                       )}
+                      style={{ width: "11em" }}
                       aria-disabled={true}
                     >
                       <span className="flex items-center gap-2">
-                        <span>Upload audio (temporarily disabled)</span>
+                        <span>Upload audio (coming soon)</span>
                       </span>
                     </label>
 
@@ -211,9 +239,13 @@ export function HeroSection() {
                 )}
               </div>
             )}
+            {/* Analysis duration notice */}
+            <div className="text-sm md:text-base text-primary font-medium text-center mt-3">
+              Analysis may take up to <span className="font-semibold">5 minutes</span> depending on song length and server load.
+            </div>
             {/* AI accuracy warning */}
-            <div className="text-xs text-muted-foreground text-center mt-2">
-              AI might not always be accurate — please review results and check for mistakes.
+            <div className="text-sm md:text-base text-muted-foreground text-center mt-3">
+              <strong>Note:</strong> AI may not always be perfect — please review results and check for mistakes.
             </div>
           </div>
         </div>
@@ -253,6 +285,3 @@ export function HeroSection() {
     </div>
   );
 }
-
-// Import the Volume2 icon
-import { Volume2 } from "lucide-react";
