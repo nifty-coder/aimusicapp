@@ -99,8 +99,10 @@ export function HeroSection() {
         variant: "destructive",
       });
     }
-
-    window.location.reload();
+    // Do not reload the page - update UI via state and hooks instead.
+    // The `addMusicUrl` call returns the new entry and we already call
+    // `updateMusicTitle(newEntry.id, fetchedTitle)` above when available,
+    // so the sidebar will reflect the fetched title immediately.
   };
 
   const isValidYouTubeUrl = (url: string) => {

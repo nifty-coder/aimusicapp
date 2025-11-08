@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { updateProfile } from 'firebase/auth';
+import { updateProfile as firebaseUpdateProfile } from 'firebase/auth'; // Renamed to avoid confusion
 import { useProfileAPI } from '@/hooks/useProfileAPI';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,17 +13,16 @@ import { useToast } from '@/hooks/use-toast';
 import { Loader2, User, Mail, Calendar, Edit3, Save, X, LogOut, ArrowLeft } from 'lucide-react';
 
 const Profile = () => {
-  const { currentUser, logout, refreshUser } = useAuth();
-  const { profile, loading: profileLoading, updateDisplayName } = useProfileAPI();
+  const { currentUser, logout } = useAuth();
+  const { profile, loading: profileApiLoading, updateDisplayName, updateProfilePicture } = useProfileAPI();
   const { toast } = useToast();
   const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false); // Renamed to "saving" for clarity
   const [formData, setFormData] = useState({
     displayName: '',
     email: '',
   });
-  // removed local profile image editing state — profile pictures are managed server-side
 
   // Update form data when profile changes
   useEffect(() => {
@@ -35,15 +34,34 @@ const Profile = () => {
     }
   }, [profile]);
 
-  const [localPic, setLocalPic] = useState<string | null>(null);
-  useEffect(() => {
-    try {
-      const p = localStorage.getItem('user-profile-picture');
-      if (p) setLocalPic(p);
-    } catch (e) {
-      // noop
-    }
-  }, []);
+  // Image upload logic
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const resizeImageToDataUrl = (file: File, maxWidth = 800, quality = 0.8): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (!e.target) return reject(new Error('FileReader error'));
+        img.src = e.target.result as string;
+      };
+      reader.onerror = (e) => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const scale = Math.min(1, maxWidth / img.width);
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return reject(new Error('Canvas not supported'));
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(dataUrl);
+      };
+      img.onerror = () => reject(new Error('Invalid image'));
+    });
+  };
 
   const getInitials = (name: string) => {
     return name
@@ -54,46 +72,49 @@ const Profile = () => {
       .slice(0, 2);
   };
 
-  // image compression/upload helpers removed — profile picture editing disabled in-app
-
   const displayName = profile?.display_name || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User';
   const userEmail = profile?.email || currentUser?.email || 'No email';
-  const userCreatedAt = currentUser?.metadata?.creationTime 
+  const userCreatedAt = currentUser?.metadata?.creationTime
     ? new Date(currentUser.metadata.creationTime).toLocaleDateString()
     : 'Unknown';
 
   const handleEdit = () => {
     setIsEditing(true);
-    setFormData({
-      displayName: profile?.display_name || '',
-      email: profile?.email || '',
-    });
+    // Reset form data to current profile values when entering edit mode
+    if (profile) {
+      setFormData({
+        displayName: profile.display_name || '',
+        email: profile.email || '',
+      });
+    }
   };
 
   const handleCancel = () => {
     setIsEditing(false);
-    setFormData({
-      displayName: profile?.display_name || '',
-      email: profile?.email || '',
-    });
+    // Reset form data to current profile values when canceling
+    if (profile) {
+      setFormData({
+        displayName: profile.display_name || '',
+        email: profile.email || '',
+      });
+    }
   };
 
   const handleSave = async () => {
     if (!currentUser) return;
-    
-    // Allow empty display name (will fall back to email)
-    const displayNameToSave = formData.displayName.trim() || null;
-    
-    setLoading(true);
+
+    const newDisplayName = formData.displayName.trim() || null;
+
+    setSaving(true);
     try {
-      // Update the user's display name in Supabase
-      await updateDisplayName(displayNameToSave);
-      
-      // Also update Firebase for consistency
-      await updateProfile(currentUser, {
-        displayName: displayNameToSave,
+      // Update the display name via the API
+      await updateDisplayName(newDisplayName);
+
+      // Also update Firebase profile for consistency
+      await firebaseUpdateProfile(currentUser, {
+        displayName: newDisplayName,
       });
-      
+
       toast({
         title: 'Success',
         description: 'Profile updated successfully!',
@@ -107,7 +128,48 @@ const Profile = () => {
         variant: 'destructive',
       });
     } finally {
-      setLoading(false);
+      setSaving(false);
+    }
+  };
+
+  const handleChoosePhoto = () => {
+    if (!fileInputRef.current) return;
+    fileInputRef.current.click();
+  };
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast({ title: 'Invalid file', description: 'Please choose an image file', variant: 'destructive' });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const dataUrl = await resizeImageToDataUrl(file, 800, 0.8);
+      await updateProfilePicture(dataUrl);
+      toast({ title: 'Profile picture updated', description: 'Your profile picture was updated successfully' });
+    } catch (err: any) {
+      console.error('Failed to upload profile picture', err);
+      toast({ title: 'Upload failed', description: err?.message || 'Could not upload picture', variant: 'destructive' });
+    } finally {
+      setSaving(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemovePhoto = async () => {
+    setSaving(true);
+    try {
+      await updateProfilePicture(null);
+      toast({ title: 'Profile picture removed', description: 'Your profile picture was removed' });
+    } catch (err: any) {
+      console.error('Failed to remove profile picture', err);
+      toast({ title: 'Remove failed', description: err?.message || 'Could not remove picture', variant: 'destructive' });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -118,6 +180,7 @@ const Profile = () => {
         title: 'Success',
         description: 'Successfully logged out!',
       });
+      navigate('/login'); // Redirect after logout
     } catch (error: any) {
       toast({
         title: 'Error',
@@ -133,10 +196,8 @@ const Profile = () => {
       [field]: value
     }));
   };
-
-  // removing all in-app profile picture editing controls; if users signed up with Google,
-  // their Google profile photo will be displayed; otherwise the Supabase-stored picture
-  // (if any) or initials will be used.
+  
+  const loadingState = profileApiLoading || saving;
 
   return (
     <div className="min-h-screen bg-gradient-hero p-4">
@@ -166,13 +227,7 @@ const Profile = () => {
                 <div className="relative mx-auto mb-4">
                   <Avatar className="h-24 w-24 mx-auto">
                     <AvatarImage
-                      // Prefer Google photoURL when the user signed up with Google
-                      src={
-                          // Prefer the locally cached picture if available
-                          localPic || (currentUser?.providerData?.[0]?.providerId === 'google.com'
-                            ? currentUser?.photoURL || profile?.profile_picture || undefined
-                            : profile?.profile_picture || undefined)
-                        }
+                      src={profile?.profile_picture || currentUser?.photoURL || undefined}
                       alt={displayName}
                     />
                     <AvatarFallback className="text-2xl font-semibold bg-primary text-primary-foreground">
@@ -194,7 +249,7 @@ const Profile = () => {
                   variant="outline"
                   className="w-full border-white/20 text-white hover:bg-white/10"
                   onClick={handleLogout}
-                  disabled={loading}
+                  disabled={loadingState}
                 >
                   <LogOut className="mr-2 h-4 w-4" />
                   Sign Out
@@ -229,16 +284,16 @@ const Profile = () => {
                         variant="outline"
                         className="border-white/20 text-white hover:bg-white/10"
                         onClick={handleCancel}
-                        disabled={loading}
+                        disabled={loadingState}
                       >
                         <X className="mr-2 h-4 w-4" />
                         Cancel
                       </Button>
                       <Button
                         onClick={handleSave}
-                        disabled={loading}
+                        disabled={loadingState}
                       >
-                        {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        {loadingState && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                         <Save className="mr-2 h-4 w-4" />
                         Save Changes
                       </Button>
@@ -263,7 +318,7 @@ const Profile = () => {
                       onChange={(e) => handleInputChange('displayName', e.target.value)}
                       className="bg-white/10 border-white/20 text-white placeholder:text-white/50"
                       placeholder="Enter your display name"
-                      disabled={loading}
+                      disabled={loadingState}
                     />
                   ) : (
                     <div className="p-3 bg-white/10 rounded-md border border-white/20">
@@ -278,29 +333,15 @@ const Profile = () => {
                     <Mail className="inline mr-2 h-4 w-4" />
                     Email Address
                   </Label>
-                  {isEditing ? (
-                    <Input
-                      id="email"
-                      type="email"
-                      value={formData.email}
-                      onChange={(e) => handleInputChange('email', e.target.value)}
-                      className="bg-white/10 border-white/20 text-white placeholder:text-white/50"
-                      placeholder="Enter your email"
-                      disabled
-                    />
-                  ) : (
-                    <div className="p-3 bg-white/10 rounded-md border border-white/20">
-                      <span className="text-white">{userEmail}</span>
-                    </div>
-                  )}
-                  {isEditing && (
-                    <p className="text-xs text-white/60">
-                      Email address cannot be changed for security reasons
-                    </p>
-                  )}
+                  <div className="p-3 bg-white/10 rounded-md border border-white/20">
+                    <span className="text-white">{userEmail}</span>
+                  </div>
+                  <p className="text-xs text-white/60">
+                    Your email address cannot be changed for security reasons
+                  </p>
                 </div>
 
-                {/* Profile Picture (read-only) */}
+                {/* Profile Picture */}
                 <div className="space-y-2">
                   <Label className="text-white">
                     Profile Picture
@@ -317,10 +358,23 @@ const Profile = () => {
                       </span>
                     </div>
                   </div>
-                  <p className="text-xs text-white/60">
-                    Profile pictures can no longer be changed inside the app. If you signed up with Google,
-                    your Google profile photo will be used automatically.
-                  </p>
+                  {isEditing && (
+                    <div className="mt-3 flex space-x-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleFileSelected}
+                      />
+                      <Button onClick={handleChoosePhoto} disabled={loadingState} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+                        Upload Photo
+                      </Button>
+                      <Button onClick={handleRemovePhoto} disabled={loadingState || !profile?.profile_picture} variant="ghost" className="text-white">
+                        Remove Photo
+                      </Button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Account Type */}
@@ -328,8 +382,8 @@ const Profile = () => {
                   <Label className="text-white">Account Type</Label>
                   <div className="p-3 bg-white/10 rounded-md border border-white/20">
                     <span className="text-white">
-                      {currentUser?.providerData[0]?.providerId === 'google.com' 
-                        ? 'Google Account' 
+                      {currentUser?.providerData[0]?.providerId === 'google.com'
+                        ? 'Google Account'
                         : 'Email & Password'
                       }
                     </span>
@@ -341,12 +395,12 @@ const Profile = () => {
                   <Label className="text-white">Email Verification</Label>
                   <div className="p-3 bg-white/10 rounded-md border border-white/20">
                     <span className={`text-sm ${
-                      currentUser?.emailVerified 
-                        ? 'text-green-400' 
+                      currentUser?.emailVerified
+                        ? 'text-green-400'
                         : 'text-yellow-400'
                     }`}>
-                      {currentUser?.emailVerified 
-                        ? '✓ Email Verified' 
+                      {currentUser?.emailVerified
+                        ? '✓ Email Verified'
                         : '⚠ Email Not Verified'
                       }
                     </span>

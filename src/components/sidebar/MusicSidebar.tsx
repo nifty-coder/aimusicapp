@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ChevronDown, ChevronRight, Music, Volume2, Piano, Drum, Zap, Mic, Music2, Trash2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMusicLibrary } from "@/hooks/useMusicLibrary";
@@ -25,6 +25,9 @@ export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
   const [downloadControllers, setDownloadControllers] = useState<Record<string, AbortController | null>>({});
   const [availableFiles, setAvailableFiles] = useState<Record<string, Set<string>>>({});
   const [titleOverrides, setTitleOverrides] = useState<Record<string, string>>({});
+  const [playingKey, setPlayingKey] = useState<string | null>(null);
+  const [playingUrl, setPlayingUrl] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const { urls, removeMusicUrl, clearLibrary, updateMusicTitle, scheduleRemoveMusicUrl, undoRemoveMusicUrl, scheduleClearLibrary, undoClearLibrary } = useMusicLibrary();
   const { toast } = useToast();
 
@@ -45,6 +48,159 @@ export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
       newExpanded.add(id);
     }
     setExpandedItems(newExpanded);
+  };
+
+  // Helper: find a specific file entry in a JSZip archive and return a Blob
+  const findEntryInZip = async (zipBlob: Blob, filename: string): Promise<Blob | null> => {
+    // @ts-ignore
+    const JSZipModule = await import('jszip');
+    // @ts-ignore
+    const JSZip = (JSZipModule as any).default || JSZipModule;
+    const zip = await JSZip.loadAsync(zipBlob);
+    let entry = zip.files[filename] || null;
+    if (!entry) {
+      const keys = Object.keys(zip.files);
+      const found = keys.find(k => k.endsWith(filename));
+      if (found) entry = zip.files[found];
+    }
+    if (!entry) return null;
+    const fileData = await entry.async('blob');
+    return fileData;
+  };
+
+  // Helper: Play or stop a file preview
+  const handlePlayToggle = async (e: any, key: string, f: any, musicUrl: any) => {
+    e.stopPropagation();
+    try {
+      if (playingKey === key) {
+        audioRef.current?.pause();
+        audioRef.current = null;
+        setPlayingKey(null);
+        if (playingUrl) {
+          URL.revokeObjectURL(playingUrl);
+          setPlayingUrl(null);
+        }
+        return;
+      }
+
+      // stop previous
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      if (playingUrl) {
+        URL.revokeObjectURL(playingUrl);
+        setPlayingUrl(null);
+      }
+
+      let srcUrl: string | null = null;
+      if (f.blobUrl) {
+        srcUrl = f.blobUrl;
+      } else {
+        // fetch ZIP and extract
+        let zipBlob: Blob | null = null;
+        if (musicUrl.cacheKey) {
+          const res = await fetch(`${apiBase}/cache/${musicUrl.cacheKey}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          zipBlob = await res.blob();
+        } else if (musicUrl.url && musicUrl.url.startsWith('http')) {
+          const res = await fetch(`${apiBase}/youtube`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ youtube_url: musicUrl.url }) });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          zipBlob = await res.blob();
+        }
+        if (!zipBlob) throw new Error('No ZIP available');
+        const fileData = await findEntryInZip(zipBlob, f.filename);
+        if (!fileData) throw new Error('File not found in ZIP');
+        srcUrl = URL.createObjectURL(fileData);
+        setPlayingUrl(srcUrl);
+      }
+
+      if (!srcUrl) throw new Error('No playable source');
+      const audio = new Audio(srcUrl);
+      audioRef.current = audio;
+      audio.onended = () => {
+        setPlayingKey(null);
+        audioRef.current = null;
+        if (playingUrl) {
+          URL.revokeObjectURL(playingUrl);
+          setPlayingUrl(null);
+        }
+      };
+      await audio.play();
+      setPlayingKey(key);
+    } catch (err: any) {
+      toast({ title: 'Playback failed', description: err?.message || String(err), variant: 'destructive' });
+    }
+  };
+
+  // Helper: download a file (from blobUrl or by extracting from remote ZIP)
+  const handleDownload = async (e: any, key: string, f: any, musicUrl: any) => {
+    e.stopPropagation();
+    if (downloading[key]) return;
+    const controller = new AbortController();
+    setDownloadControllers(prev => ({ ...prev, [key]: controller }));
+    setDownloading(prev => ({ ...prev, [key]: true }));
+    try {
+      if (f.blobUrl) {
+        const a = document.createElement('a');
+        a.href = f.blobUrl;
+        a.download = f.filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } else {
+        // Prefer cached ZIP for uploaded files when cacheKey is present
+        let zipBlob: Blob | null = null;
+        if (musicUrl.cacheKey) {
+          const res = await fetch(`${apiBase}/cache/${musicUrl.cacheKey}`, {
+            method: 'GET',
+            signal: controller.signal
+          });
+          if (!res.ok) {
+            let detail = `HTTP ${res.status}`;
+            try { const json = await res.json(); detail = json.detail || json.message || JSON.stringify(json); } catch {};
+            throw new Error(detail);
+          }
+          zipBlob = await res.blob();
+        } else if (musicUrl.url && musicUrl.url.startsWith('http')) {
+          const res = await fetch(`${apiBase}/youtube`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ youtube_url: musicUrl.url }),
+            signal: controller.signal
+          });
+          if (!res.ok) {
+            let detail = `HTTP ${res.status}`;
+            try { const json = await res.json(); detail = json.detail || json.message || JSON.stringify(json); } catch {};
+            throw new Error(detail);
+          }
+          zipBlob = await res.blob();
+        } else {
+          throw new Error('Original uploaded file not available for re-download in this session.');
+        }
+
+        if (!zipBlob) throw new Error('No ZIP archive available');
+        const fileData = await findEntryInZip(zipBlob, f.filename);
+        if (!fileData) throw new Error('File not found inside archive');
+        const url = URL.createObjectURL(fileData);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = f.filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      }
+    } catch (err: any) {
+      if (err && err.name === 'AbortError') {
+        toast({ title: 'Download cancelled', description: 'The download was stopped.', variant: 'default' });
+      } else {
+        toast({ title: 'Download failed', description: err?.message || String(err), variant: 'destructive' });
+      }
+    } finally {
+      setDownloading(prev => ({ ...prev, [key]: false }));
+      setDownloadControllers(prev => ({ ...prev, [key]: null }));
+    }
   };
 
   // When expanding a YouTube item, fetch the extracted file listing from backend
@@ -143,7 +299,8 @@ export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
                 <div
                   key={musicUrl.id}
                   className={cn(
-                    "bg-muted/30 rounded-xl border border-border/30 overflow-hidden backdrop-blur-sm transition-all duration-300 hover:bg-muted/50",
+                    // softened visuals
+                    "bg-muted/10 rounded-xl border border-border/10 overflow-hidden transition-all duration-300",
                     "animate-fade-in"
                   )}
                   style={{ animationDelay: `${idx * 60}ms` }}
@@ -153,7 +310,7 @@ export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
                     onClick={() => {
                       toggleExpanded(musicUrl.id);
                     }}
-                    className="w-full p-4 text-left flex items-center gap-3 hover:bg-muted/20 transition-colors"
+                    className="w-full p-3 text-left flex items-center gap-3 hover:bg-muted/10 transition-colors"
                   >
                     <div className="flex-shrink-0">
                       {isExpanded ? (
@@ -174,7 +331,9 @@ export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
                       </p>
                     </div>
                     
-                    <button
+                    <span
+                      role="button"
+                      tabIndex={0}
                       onClick={(e) => {
                         e.stopPropagation();
                         try {
@@ -197,16 +356,23 @@ export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
                           toast({ title: 'Error', description: err?.message || 'Failed to delete item', variant: 'destructive' });
                         }
                       }}
-                      className="p-1 hover:bg-destructive/20 rounded transition-colors"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          const ev = e as React.KeyboardEvent<HTMLSpanElement>;
+                          ev.currentTarget.click?.();
+                        }
+                      }}
+                      className="p-1 hover:bg-destructive/20 rounded transition-colors inline-flex items-center"
                     >
                       <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
-                    </button>
+                    </span>
                   </button>
 
                   {/* Layers Dropdown */}
                   {isExpanded && (
-                    <div className="border-t border-border/30 bg-card/50 animate-slide-up">
-                      <div className="p-3 space-y-2">
+                    <div className="border-t border-border/20 bg-card/0 animate-slide-up">
+                      <div className="p-2 space-y-2">
                         <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
                           Audio Layers
                         </h4>
@@ -221,8 +387,8 @@ export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
                             <div
                               key={layer.id}
                               className={cn(
-                                "flex items-center gap-3 p-3 rounded-lg transition-all duration-200",
-                                "bg-background/50 hover:bg-background/80 border border-border/20"
+                                "flex items-center gap-3 p-2 rounded-lg transition-all duration-200",
+                                "bg-background/0 hover:bg-background/5 border border-border/10"
                               )}
                             >
                               <IconComponent className="w-4 h-4 text-primary flex-shrink-0" />
@@ -266,90 +432,22 @@ export function MusicSidebar({ onUrlSelect }: MusicSidebarProps) {
                                     <span className="text-sm truncate">{f.filename}</span>
                                     <div className="flex items-center gap-2">
                                       {!isDownloading ? (
-                                        <button
-                                          className="text-sm text-primary hover:underline flex items-center gap-2"
-                                          onClick={async (e) => {
-                                            e.stopPropagation();
-                                            if (downloading[key]) return;
-                                            const controller = new AbortController();
-                                            setDownloadControllers(prev => ({ ...prev, [key]: controller }));
-                                            setDownloading(prev => ({ ...prev, [key]: true }));
-                                            try {
-                                              if (f.blobUrl) {
-                                                const a = document.createElement('a');
-                                                a.href = f.blobUrl;
-                                                a.download = f.filename;
-                                                document.body.appendChild(a);
-                                                a.click();
-                                                a.remove();
-                                              } else {
-                                                // Prefer cached ZIP for uploaded files when cacheKey is present
-                                                let zipBlob: Blob | null = null;
-                                                if (musicUrl.cacheKey) {
-                                                  const res = await fetch(`${apiBase}/cache/${musicUrl.cacheKey}`, {
-                                                    method: 'GET',
-                                                    signal: controller.signal
-                                                  });
-                                                  if (!res.ok) {
-                                                    let detail = `HTTP ${res.status}`;
-                                                    try { const json = await res.json(); detail = json.detail || json.message || JSON.stringify(json); } catch {};
-                                                    throw new Error(detail);
-                                                  }
-                                                  zipBlob = await res.blob();
-                                                } else if (musicUrl.url && musicUrl.url.startsWith('http')) {
-                                                  const res = await fetch(`${apiBase}/youtube`, {
-                                                    method: 'POST',
-                                                    headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({ youtube_url: musicUrl.url }),
-                                                    signal: controller.signal
-                                                  });
-                                                  if (!res.ok) {
-                                                    let detail = `HTTP ${res.status}`;
-                                                    try { const json = await res.json(); detail = json.detail || json.message || JSON.stringify(json); } catch {};
-                                                    throw new Error(detail);
-                                                  }
-                                                  zipBlob = await res.blob();
-                                                } else {
-                                                  throw new Error('Original uploaded file not available for re-download in this session.');
-                                                }
-
-                                                if (!zipBlob) throw new Error('No ZIP archive available');
-                                                // @ts-ignore
-                                                const JSZipModule = await import('jszip');
-                                                // @ts-ignore
-                                                const JSZip = (JSZipModule as any).default || JSZipModule;
-                                                const zip = await JSZip.loadAsync(zipBlob);
-                                                let entry = zip.files[f.filename] || null;
-                                                if (!entry) {
-                                                  const keys = Object.keys(zip.files);
-                                                  const found = keys.find(k => k.endsWith(f.filename));
-                                                  if (found) entry = zip.files[found];
-                                                }
-                                                if (!entry) throw new Error('File not found inside archive');
-                                                const fileData = await entry.async('blob');
-                                                const url = URL.createObjectURL(fileData);
-                                                const a = document.createElement('a');
-                                                a.href = url;
-                                                a.download = f.filename;
-                                                document.body.appendChild(a);
-                                                a.click();
-                                                a.remove();
-                                                setTimeout(() => URL.revokeObjectURL(url), 60_000);
-                                              }
-                                            } catch (err: any) {
-                                              if (err && err.name === 'AbortError') {
-                                                toast({ title: 'Download cancelled', description: 'The download was stopped.', variant: 'default' });
-                                              } else {
-                                                toast({ title: 'Download failed', description: err?.message || String(err), variant: 'destructive' });
-                                              }
-                                            } finally {
-                                              setDownloading(prev => ({ ...prev, [key]: false }));
-                                              setDownloadControllers(prev => ({ ...prev, [key]: null }));
-                                            }
-                                          }}
-                                        >
-                                          Download
-                                        </button>
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            className="text-sm text-primary hover:underline flex items-center gap-2"
+                                            onClick={(e) => handlePlayToggle(e, key, f, musicUrl)}
+                                          >
+                                            {playingKey === key ? 'Stop' : 'Play'}
+                                          </button>
+                                          
+                                          {/* existing download button follows */}
+                                          <button
+                                            className="text-sm text-primary hover:underline flex items-center gap-2"
+                                            onClick={(e) => handleDownload(e, key, f, musicUrl)}
+                                          >
+                                            Download
+                                          </button>
+                                        </div>
                                       ) : (
                                         <div className="flex items-center gap-2">
                                           <Loader2 className="w-4 h-4 animate-spin" />

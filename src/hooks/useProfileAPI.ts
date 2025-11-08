@@ -11,6 +11,12 @@ export const useProfileAPI = () => {
   // Get Firebase ID token
   const getFirebaseToken = async (): Promise<string> => {
     if (!currentUser) {
+      // Local dev fallback: allow VITE_DEV_PROFILE_TOKEN to be used when no Firebase user exists
+      const devToken = import.meta.env.VITE_DEV_PROFILE_TOKEN as string | undefined;
+      if (devToken) {
+        console.warn('Using VITE_DEV_PROFILE_TOKEN for profile API (dev only)');
+        return devToken;
+      }
       throw new Error('No authenticated user');
     }
     

@@ -7,6 +7,8 @@ import {
   onAuthStateChanged,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 
@@ -60,16 +62,29 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
-    const cred = await signInWithPopup(auth, provider);
-    // If this is a newly created user via Google, clear any existing local library
     try {
-      if ((cred as any)?.additionalUserInfo?.isNewUser) {
-        localStorage.removeItem('music-analyzer-library');
+      const cred = await signInWithPopup(auth, provider);
+      // If this is a newly created user via Google, clear any existing local library
+      try {
+        if ((cred as any)?.additionalUserInfo?.isNewUser) {
+          localStorage.removeItem('music-analyzer-library');
+        }
+      } catch (e) {
+        // noop
       }
-    } catch (e) {
-      // noop
+      return cred;
+    } catch (err) {
+      // Some hosting environments / browser policies (Cross-Origin-Opener-Policy/Cross-Origin-Embedder-Policy)
+      // can block popup usage. Fall back to redirect flow in that case.
+      console.warn('signInWithPopup failed, falling back to redirect. Error:', err);
+      try {
+        await signInWithRedirect(auth, provider);
+      } catch (redirectErr) {
+        console.error('signInWithRedirect also failed:', redirectErr);
+        throw redirectErr;
+      }
+      return null;
     }
-    return cred;
   };
 
   const refreshUser = async () => {
@@ -81,12 +96,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    let unsub = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
       setLoading(false);
     });
 
-    return unsubscribe;
+    // If user was redirected back from a provider (signInWithRedirect), process the result
+    (async () => {
+      try {
+        const result = await getRedirectResult(auth as any);
+        if (result && (result as any).additionalUserInfo?.isNewUser) {
+          try {
+            localStorage.removeItem('music-analyzer-library');
+          } catch (e) {
+            // noop
+          }
+        }
+      } catch (e) {
+        // ignore: no redirect result available is normal
+      }
+    })();
+
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
   }, []);
 
   const value: AuthContextType = {
