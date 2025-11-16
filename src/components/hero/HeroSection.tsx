@@ -99,6 +99,7 @@ export function HeroSection() {
         variant: "destructive",
       });
     }
+    
     // Do not reload the page - update UI via state and hooks instead.
     // The `addMusicUrl` call returns the new entry and we already call
     // `updateMusicTitle(newEntry.id, fetchedTitle)` above when available,

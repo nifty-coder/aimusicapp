@@ -83,10 +83,27 @@ class ApiService {
       }
 
       if (!response.ok) {
-        console.error('API request failed:', response.status, data.message || text);
+        // Extract error detail from response
+        const errorDetail = data.detail || data.message || data.error || text;
+        console.error('API request failed:', response.status, errorDetail);
+        
+        // Provide helpful error messages for common issues
+        let errorMessage = errorDetail;
+        if (response.status === 401) {
+          if (errorDetail?.includes('Firebase verification unavailable')) {
+            errorMessage = `Backend Configuration Error: ${errorDetail}\n\nTo fix this, configure Firebase Admin SDK in your backend server:\n1. Install firebase-admin: pip install firebase-admin\n2. Download service account key from Firebase Console\n3. Set GOOGLE_APPLICATION_CREDENTIALS environment variable\n4. Initialize Firebase Admin in your backend code`;
+          } else {
+            errorMessage = `Authentication failed: ${errorDetail}`;
+          }
+        } else if (response.status === 500) {
+          errorMessage = `Server error: ${errorDetail || 'Internal server error. Check backend logs.'}`;
+        } else if (response.status === 404) {
+          errorMessage = `Endpoint not found: ${endpoint}`;
+        }
+        
         return {
           success: false,
-          error: data.message || `HTTP error! status: ${response.status}`,
+          error: errorMessage,
         };
       }
 

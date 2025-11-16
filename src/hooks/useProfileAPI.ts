@@ -8,27 +8,6 @@ export const useProfileAPI = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Get Firebase ID token
-  const getFirebaseToken = async (): Promise<string> => {
-    if (!currentUser) {
-      // Local dev fallback: allow VITE_DEV_PROFILE_TOKEN to be used when no Firebase user exists
-      const devToken = import.meta.env.VITE_DEV_PROFILE_TOKEN as string | undefined;
-      if (devToken) {
-        console.warn('Using VITE_DEV_PROFILE_TOKEN for profile API (dev only)');
-        return devToken;
-      }
-      throw new Error('No authenticated user');
-    }
-    
-    try {
-      const token = await currentUser.getIdToken();
-      return token;
-    } catch (error) {
-      console.error('Error getting Firebase token:', error);
-      throw new Error('Failed to get authentication token');
-    }
-  };
-
   // Fetch profile from backend API
   const fetchProfile = async () => {
     if (!currentUser) {
@@ -41,8 +20,7 @@ export const useProfileAPI = () => {
       setLoading(true);
       setError(null);
 
-      const token = await getFirebaseToken();
-      const response = await apiService.getProfile(token);
+      const response = await apiService.getProfile();
 
       if (response.success && response.data) {
         console.log('Profile fetched successfully:', response.data);
@@ -80,8 +58,6 @@ export const useProfileAPI = () => {
     if (!currentUser) return;
 
     try {
-      const token = await getFirebaseToken();
-      
       const newProfileData = {
         user_id: currentUser.uid,
         display_name: currentUser.displayName || null,
@@ -91,7 +67,7 @@ export const useProfileAPI = () => {
 
       console.log('Creating profile for user:', currentUser.uid);
       
-      const response = await apiService.createProfile(token, newProfileData);
+      const response = await apiService.createProfile(newProfileData);
 
       if (response.success && response.data) {
         console.log('Profile created successfully:', response.data);
@@ -119,9 +95,8 @@ export const useProfileAPI = () => {
 
     try {
       setError(null);
-      const token = await getFirebaseToken();
 
-      const response = await apiService.updateProfile(token, updates);
+      const response = await apiService.updateProfile(updates);
 
       if (response.success && response.data) {
         console.log('Profile updated successfully:', response.data);
@@ -175,9 +150,8 @@ export const useProfileAPI = () => {
 
     try {
       setError(null);
-      const token = await getFirebaseToken();
 
-      const response = await apiService.deleteProfile(token);
+      const response = await apiService.deleteProfile();
 
       if (response.success) {
         console.log('Profile deleted successfully');

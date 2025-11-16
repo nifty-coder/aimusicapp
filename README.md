@@ -72,7 +72,12 @@ This project uses Firebase Authentication for user management. To set up Firebas
 2. **Enable Authentication**:
    - In your Firebase project, go to Authentication > Sign-in method
    - Enable Email/Password authentication
-   - Enable Google authentication (optional)
+   - Enable Google authentication:
+     * Click on "Google" provider
+     * Toggle "Enable" switch
+     * Enter a project support email (required)
+     * Click "Save"
+     * Note: Firebase will automatically create OAuth credentials for you
 
 3. **Get Firebase Configuration**:
    - Go to Project Settings (gear icon)
@@ -91,12 +96,184 @@ This project uses Firebase Authentication for user management. To set up Firebas
    VITE_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
    ```
 
-5. **Start the Development Server**:
+5. **Configure Authorized Domains (Required for Google Sign-In)**:
+   - In Firebase Console, go to Authentication > Settings > Authorized domains
+   - Click "Add domain" and add:
+     * `localhost` (for local development)
+     * Your production domain (e.g., `yourdomain.com`)
+   - This is required to prevent "Access blocked" errors when using Google Sign-In
+
+6. **Configure Google Cloud OAuth (If using Google Sign-In)**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Select your Firebase project (same project ID)
+   - Navigate to APIs & Services > Credentials
+   - Find your OAuth 2.0 Client ID (created automatically by Firebase)
+   - Click to edit it
+   - Under "Authorized JavaScript origins", add:
+     * `http://localhost:8080` (for local development)
+     * `https://yourdomain.com` (for production)
+   - Under "Authorized redirect URIs", add:
+     * `http://localhost:8080` (for local development)
+     * `https://yourdomain.com` (for production)
+   - Click "Save"
+
+7. **Start the Development Server**:
    ```sh
    npm run dev
    ```
 
 The app will now require authentication. Users will be redirected to the login page if not authenticated.
+
+### Troubleshooting Google Sign-In
+
+If you see "Access blocked: This app's request is invalid" error:
+
+1. **Check Authorized Domains**:
+   - Ensure `localhost` is added in Firebase Console > Authentication > Settings > Authorized domains
+   - For production, ensure your domain is added
+
+2. **Check OAuth Configuration**:
+   - Verify Google Sign-In is enabled in Firebase Console > Authentication > Sign-in method
+   - Check that your OAuth client ID has the correct authorized origins and redirect URIs in Google Cloud Console
+
+3. **Check Environment Variables**:
+   - Ensure all Firebase environment variables are set correctly in `.env.local`
+   - Restart your dev server after changing environment variables
+
+## Backend API Setup
+
+This application requires a backend API server running on `http://localhost:8000` (or the URL specified in `VITE_API_BASE_URL`). The backend handles:
+
+- User profile management (`/api/profile`)
+- YouTube audio extraction (`/youtube`)
+- Audio file uploads (`/upload`)
+
+### Backend Requirements
+
+The backend must be configured with Firebase Admin SDK to verify Firebase ID tokens from the frontend.
+
+#### For Python/FastAPI Backend:
+
+1. **Install Firebase Admin SDK**:
+   ```bash
+   pip install firebase-admin
+   ```
+
+2. **Get Firebase Service Account Key**:
+   - Go to [Firebase Console](https://console.firebase.google.com/)
+   - Select your project
+   - Go to Project Settings (gear icon) > Service accounts
+   - Click "Generate new private key"
+   - Save the JSON file securely (e.g., `firebase-service-account.json`)
+
+3. **Set Environment Variable** (in your backend server directory):
+   
+   **Option A: Using export command (temporary - only for current terminal session)**
+   
+   Open a terminal in your backend server directory and run:
+   ```bash
+   export GOOGLE_APPLICATION_CREDENTIALS="/path/to/firebase-service-account.json"
+   ```
+   Replace `/path/to/firebase-service-account.json` with the actual path to your downloaded JSON file.
+   
+   **Option B: Using a `.env` file (recommended - persists across sessions)**
+   
+   In your backend server directory, create or edit a `.env` file and add:
+   ```
+   GOOGLE_APPLICATION_CREDENTIALS=/path/to/firebase-service-account.json
+   ```
+   
+   Then make sure your backend code loads environment variables from the `.env` file (using `python-dotenv` for Python, or similar for other languages).
+   
+   **Example:**
+   - If your backend is in `/Users/yourname/backend-server/`
+   - And your service account file is at `/Users/yourname/backend-server/firebase-service-account.json`
+   - Then use: `GOOGLE_APPLICATION_CREDENTIALS=/Users/yourname/backend-server/firebase-service-account.json`
+   
+   **Note:** This is done in your backend server directory, NOT in this frontend project directory.
+
+4. **Initialize Firebase Admin in Your Backend**:
+   ```python
+   import firebase_admin
+   from firebase_admin import credentials, auth
+   
+   # Initialize Firebase Admin
+   cred = credentials.Certificate("firebase-service-account.json")
+   firebase_admin.initialize_app(cred)
+   
+   # Verify ID token in your endpoints
+   def verify_token(id_token: str):
+       try:
+           decoded_token = auth.verify_id_token(id_token)
+           return decoded_token
+       except Exception as e:
+           raise HTTPException(status_code=401, detail=str(e))
+   ```
+
+5. **Example FastAPI Endpoint**:
+   ```python
+   from fastapi import FastAPI, HTTPException, Header
+   
+   app = FastAPI()
+   
+   @app.get("/api/profile")
+   async def get_profile(authorization: str = Header(None)):
+       if not authorization or not authorization.startswith("Bearer "):
+           raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+       
+       token = authorization.split("Bearer ")[1]
+       try:
+           decoded_token = auth.verify_id_token(token)
+           user_id = decoded_token['uid']
+           # Fetch profile from database using user_id
+           # ...
+       except Exception as e:
+           raise HTTPException(status_code=401, detail=f"Firebase verification failed: {str(e)}")
+   ```
+
+### Backend API Endpoints
+
+The backend should implement these endpoints:
+
+- `GET /api/profile` - Get user profile (requires Firebase ID token)
+- `POST /api/profile` - Create user profile (requires Firebase ID token)
+- `PUT /api/profile` - Update user profile (requires Firebase ID token)
+- `DELETE /api/profile` - Delete user profile (requires Firebase ID token)
+- `POST /youtube` - Extract audio from YouTube URL (returns ZIP file)
+- `POST /upload` - Upload and process audio file (returns ZIP file)
+
+### Troubleshooting Backend Errors
+
+**Error: "Firebase verification unavailable"**
+- Ensure Firebase Admin SDK is installed
+- Verify service account key file path is correct
+- Check that `GOOGLE_APPLICATION_CREDENTIALS` environment variable is set
+- Ensure the service account has proper permissions in Firebase Console
+
+**Error: "ffmpeg and ffprobe are required but not found" (500 error)**
+- This means `ffmpeg` is not installed on the machine where your backend server is running
+- **If running backend locally on macOS:**
+  ```bash
+  brew install ffmpeg
+  ```
+- **If running backend locally on Ubuntu/Debian:**
+  ```bash
+  sudo apt-get update
+  sudo apt-get install ffmpeg
+  ```
+- **If running backend locally on Windows:**
+  - Download from https://ffmpeg.org/download.html
+  - Add ffmpeg to your system PATH
+- **If backend is on a remote server:**
+  - SSH into your server and install ffmpeg there
+  - For Docker: Add `ffmpeg` installation to your Dockerfile
+- After installing, restart your backend server
+
+**Error: 500 Internal Server Error (general)**
+- Check backend server logs for detailed error messages
+- Verify all required dependencies are installed (including `ffmpeg` for audio processing)
+- Ensure the backend server is running on the correct port (default: 8000)
+- Verify that all system dependencies are available on the server
 
 ## How can I deploy this project?
 

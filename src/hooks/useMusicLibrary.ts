@@ -78,13 +78,21 @@ export function useMusicLibrary() {
         let detail = `HTTP ${res.status}`;
         try {
           const json = await res.json();
-          detail = json.detail || json.message || JSON.stringify(json);
+          detail = json.detail || json.message || json.error || JSON.stringify(json);
         } catch (e) {
           try {
             const text = await res.text();
             detail = text || detail;
           } catch {}
         }
+        
+        // Provide helpful error messages
+        if (res.status === 500) {
+          detail = `Backend server error: ${detail}\n\nMake sure your backend server is running and properly configured. Check backend logs for details.`;
+        } else if (res.status === 404) {
+          detail = `Endpoint not found: /youtube\n\nEnsure your backend server implements the /youtube endpoint.`;
+        }
+        
         throw new Error(detail);
       }
 
@@ -163,13 +171,21 @@ export function useMusicLibrary() {
         let detail = `HTTP ${res.status}`;
         try {
           const json = await res.json();
-          detail = json.detail || json.message || JSON.stringify(json);
+          detail = json.detail || json.message || json.error || JSON.stringify(json);
         } catch (e) {
           try {
             const text = await res.text();
             detail = text || detail;
           } catch {}
         }
+        
+        // Provide helpful error messages
+        if (res.status === 500) {
+          detail = `Backend server error: ${detail}\n\nMake sure your backend server is running and properly configured. Check backend logs for details.`;
+        } else if (res.status === 404) {
+          detail = `Endpoint not found: /upload\n\nEnsure your backend server implements the /upload endpoint.`;
+        }
+        
         throw new Error(detail);
       }
 
